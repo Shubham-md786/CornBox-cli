@@ -1,0 +1,130 @@
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+import bytes from 'bytes';
+import Anime from './Anime.js';
+import { base64Encode } from '../../utils/base64.js';
+import { download } from '../../utils/download.js';
+
+const baseInfoURL = 'https://api.animixplay.tube/ajax/search?page=1&search=';
+const baseEpURL = 'https://api.animixplay.tube/ajax/list?series=';
+
+class Download extends Anime {
+    constructor(animeName) {
+        super(animeName);
+        this.infoURL = `${baseInfoURL}${base64Encode(`?keyword=${this.slug}`)}`;
+    }
+
+    async setInfo() {
+        const { data } = await axios.get(this.infoURL, {
+            headers: { 'Accept-Encoding': 'gzip' },
+        });
+        const $ = cheerio.load(data.data);
+        this.animeInfo = $('li')
+            .map((i, elem) => {
+                const title = $(elem).find('.name').text();
+                const slug = $(elem).find('a').attr('href');
+                return { title, slug };
+            })
+            .get();
+    }
+
+    async getTitles() {
+        if (!this.animeInfo) await this.setInfo();
+        return this.animeInfo.map((ele) => ele.title);
+    }
+
+    async getId() {
+        const { data } = await axios.get(this.selectedAnime.slug, {
+            headers: { 'Accept-Encoding': 'gzip' },
+        });
+        const $ = cheerio.load(data);
+        return $('#player-id').attr('value');
+    }
+
+    async getTotalEpisodes() {
+        const { data } = await axios.get(
+            `${baseEpURL}${this.selectedAnime.id}`,
+            { headers: { 'Accept-Encoding': 'gzip' } }
+        );
+        const $ = cheerio.load(data.eplist);
+        return (
+            $('#w-episodes .dropdown-item:last-child')
+                .text()
+                .trim()
+                .split('-')[1] * 1
+        );
+    }
+
+    async select(title) {
+        this.selectedAnime = this.animeInfo.find((ele) => ele.title === title);
+        this.selectedAnime.download = this.selectedAnime.slug.replace(
+            '/anime/',
+            '/download/'
+        );
+        this.selectedAnime.id = await this.getId();
+        this.selectedAnime.totalEpisodes = await this.getTotalEpisodes();
+        return this.selectedAnime;
+    }
+
+    async fetchDownloadData(epNo) {
+  const url = `${this.selectedAnime.download}-episode-${epNo}`;
+  const { data } = await axios.get(url, {
+    headers: { 'Accept-Encoding': 'gzip' },
+  });
+  const $ = cheerio.load(data);
+  const downloadData = $('.dl-site')
+    .map(async (index, element) => {
+      const quality = $(element)
+        .find('.site-name')
+        .text()
+        .trim()
+        .split('x')[1];
+      const url = $(element).find('.dls-download a').attr('href');
+      const title = `${$('#seriestitle')
+        .text()
+        .split('-')[1]
+        .trim()} ${quality}p`;
+      const urlHead = await axios.head(url);
+      const size = bytes(parseInt(urlHead.headers['content-length'], 10), {
+        unitSeparator: ' ',
+      });
+      return { quality, size, url, title, epNo };
+    })
+    .get();
+  return Promise.all(downloadData);
+}
+
+    async fetchDownload(epNo) {
+        const downloads = await this.fetchDownloadData(epNo);
+        this.selectedAnime.downloadData = downloads;
+        return downloads;
+    }
+
+    async fetchDownloads(from, to) {
+        const arr = [];
+        for (from; from <= to; from++) {
+            arr.push(await this.fetchDownload(from));
+        }
+        this.selectedAnime.downloadData = arr;
+	console.log(arr);
+        return arr;
+    }
+
+    async downloadOne(quality) {
+	quality = quality.split('  ')[0]
+        this.selectedAnime.selectedDownload =
+            this.selectedAnime.downloadData.find(
+                (ele) => `${ele.quality}p` === quality
+            );
+        await download('Anime',[this.selectedAnime.selectedDownload]);
+    }
+    async downloadMany(quality) {
+	quality = quality.split('  ')[0];
+        this.selectedAnime.selectedDownload =
+            this.selectedAnime.downloadData.flatMap((innerArr) => innerArr.filter((obj) => `${obj.quality}p` === quality)
+            );
+        await download('Anime',this.selectedAnime.selectedDownload);
+    }
+}
+
+export default Download;

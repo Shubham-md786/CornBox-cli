@@ -1,0 +1,50 @@
+import Downloader from 'nodejs-file-downloader';
+import ProgressBar from 'progress';
+import { platform, homedir, availableParallelism } from 'os';
+
+const numCPUs = 1;//availableParallelism();
+
+let dir = './download';
+if (platform() === 'android') dir = '/storage/emulated/0/Anime';
+if (platform() === 'win32') dir = `${homedir()}/Anime`;
+
+const download = async (urls) => {
+  // console.log(urls);
+  const downloadPromises = urls.map((url) => {
+    let length = 0;
+    let bar;
+
+    const downloader = new Downloader({
+      url: url.url,
+      directory: dir,
+      maxAttempts: 3,
+      fileName: url.title,
+      onResponse: (res) => {
+        length = parseInt(res.headers['content-length'], 10);
+        bar = new ProgressBar(`Episode ${url.epNo} [:bar] :rate/bps :percent :etas`, {
+          complete: '=',
+          incomplete: ' ',
+          width: 20,
+          total: length,
+        });
+      },
+      onProgress: (percentage, chunk, remainingSize) => {
+        bar.tick(chunk.length);
+      },
+    }).download();
+
+    return downloader
+  });
+
+  try {
+    for (let i = 0; i < downloadPromises.length; i += numCPUs) {
+      const chunk = downloadPromises.slice(i, i + numCPUs);
+      console.log(chunk);
+      await Promise.all(chunk);
+    }
+  } catch (error) {
+    console.log(error);
+  }
+};
+
+export { download };

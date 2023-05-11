@@ -1,0 +1,3 @@
+if in multiple download episode if one not has that quality then it will be excluded
+
+in multiple please wait some time for rate limiting in downloads
